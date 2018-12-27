@@ -2,12 +2,14 @@ extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
 extern crate permutator;
+extern crate sudoku;
 
 use std::cmp::Ord;
 use std::fmt;
 
 use itertools::Itertools;
 use permutator::Permutation;
+use sudoku::Sudoku as Sud;
 
 /// Coordinate;
 type Coord = (usize, usize);
@@ -53,8 +55,9 @@ lazy_static!{
 }
 
 fn main() {
-    // Build the list of clusters
+    // Build the list of clusters and letters
     let clusters = clusters();
+    let letters = letters();
 
     (0..WORDS.len())
         .collect::<Vec<usize>>()
@@ -77,8 +80,7 @@ fn main() {
                 .collect::<Vec<Vec<&'static str>>>()
         })
         .map(|words| {
-            let mut f = Field::default(EMPTY);
-
+            let mut f = Sudoku::default(EMPTY);
             for (word, serie) in words.iter().zip(SERIES.iter()) {
                 for (i, c) in word.chars().enumerate() {
                     f.f[serie[i].0][serie[i].1] = c;
@@ -87,10 +89,32 @@ fn main() {
 
             f
         })
-        .filter(|field| is_field_valid(&field, &clusters))
-        .for_each(|field| {
-            println!("Possibility:\n{}", field);
+        .filter(|sudoku| is_sudoku_valid(&sudoku, &clusters))
+        .filter_map(|sudoku| Sud::from_bytes(
+                sudoku.to_bytes(&letters),
+            )
+            .expect("failed to convert to sudoku for solving")
+            .solve_unique()
+        )
+        .map(|sudoku| Sudoku::from_bytes(EMPTY, sudoku.to_bytes(), &letters))
+        .for_each(|sudoku| {
+            println!("Possibility:\n{}", sudoku);
         });
+
+    println!("Done");
+}
+
+/// Generate a map of letters for converting a character puzzle to a number sudoku.
+fn letters() -> Vec<char> {
+    // Create a map of all used letters
+    let mut letters: Vec<char> = WORDS
+        .iter()
+        .flat_map(|w| w.chars().collect::<Vec<char>>())
+        .unique()
+        .collect();
+    letters.insert(0, EMPTY);
+
+    letters
 }
 
 /// Collect all clusters (rows, columns and squares) of unique cells to check for full field
@@ -100,7 +124,7 @@ fn main() {
 /// this puzzle as they are not used.
 fn clusters() -> Vec<Vec<Coord>> {
     // Define a bool field, mark all cells part of a series
-    let mut f = Field::default(false);
+    let mut f = Sudoku::default(false);
     SERIES.iter()
         .flatten()
         .for_each(|c| f.f[c.0][c.1] = true);
@@ -134,15 +158,16 @@ fn clusters() -> Vec<Vec<Coord>> {
 }
 
 /// Check whether the given field is valid for the current list of clusters.
-fn is_field_valid<T>(field: &Field<T>, clusters: &Vec<Vec<Coord>>) -> bool
-    where T: Ord + Copy
+fn is_sudoku_valid<T>(sudoku: &Sudoku<T>, clusters: &Vec<Vec<Coord>>) -> bool
+    where T: Ord + Copy,
 {
     clusters
         .iter()
         .all(|cluster| {
+            // TODO: optimize this duplicate check
             let mut cells: Vec<T> = cluster
                 .iter()
-                .map(|c| field.f[c.0][c.1])
+                .map(|c| sudoku.f[c.0][c.1])
                 .collect();
             cells.sort_unstable();
             cells.dedup();
@@ -151,22 +176,68 @@ fn is_field_valid<T>(field: &Field<T>, clusters: &Vec<Vec<Coord>>) -> bool
 }
 
 #[derive(Clone)]
-struct Field<T> {
+struct Sudoku<T> {
     f: [[T; 9]; 9],
 }
 
-impl<T> Field<T>
-    where T: Copy
+impl<T> Sudoku<T>
+    where T: Copy + PartialEq + std::fmt::Debug,
 {
-    fn default(value: T) -> Field<T> {
-        Field {
+    /// Generate a sudoku filled with the given default value.
+    fn default(value: T) -> Sudoku<T> {
+        Sudoku {
             f: [[value; 9]; 9],
         }
+    }
+
+    fn from_bytes(default: T, bytes: [u8; 81], letters: &[T]) -> Self {
+        // Build a set of rows
+        let rows: Vec<[T; 9]> = bytes.chunks(9)
+            .map(|row| {
+                // Convert the bytes back into their characters
+                let chars: Vec<T> = row
+                    .iter()
+                    .map(|c| letters[*c as usize])
+                    .collect();
+
+                // Put the chars into a fixed size array
+                let mut out = [default; 9];
+                out.copy_from_slice(&chars);
+
+                out
+            })
+            .collect();
+
+        // Put the rows into a fixed size array
+        let mut out = [[default; 9]; 9];
+        out.copy_from_slice(&rows);
+
+        Sudoku {
+            f: out,
+        }
+    }
+
+    /// Convert the sudoku to a byte slice, based on the given letter index map.
+    fn to_bytes(&self, letters: &[T]) -> [u8; 81] {
+        // Convert the sudoku in a set of bytes
+        let bytes: Vec<u8> = self.f
+            .iter()
+            .flat_map(|row| row
+                .iter()
+                .map(|c| letters.iter().position(|l| c == l).expect("unknown char") as u8)
+                .collect::<Vec<_>>()
+            )
+            .collect();
+
+        let mut out = [0; 81];
+        out.copy_from_slice(&bytes);
+
+        out
     }
 }
 
 /// Humanly display sudoku field
-impl<T> fmt::Display for Field<T>
+impl<T> fmt::Display for Sudoku<T>
     where T: fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
