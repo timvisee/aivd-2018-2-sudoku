@@ -90,6 +90,9 @@ fn main() {
             f
         })
         .filter(|sudoku| is_sudoku_valid(&sudoku, &clusters))
+        .inspect(|sudoku| {
+            println!("Possibility:\n{}", sudoku)
+        })
         .filter_map(|sudoku| Sud::from_bytes(
                 sudoku.to_bytes(&letters),
             )
@@ -98,7 +101,7 @@ fn main() {
         )
         .map(|sudoku| Sudoku::from_bytes(EMPTY, sudoku.to_bytes(), &letters))
         .for_each(|sudoku| {
-            println!("Possibility:\n{}", sudoku);
+            println!("Possibility (filled):\n{}", sudoku);
         });
 
     println!("Done");
